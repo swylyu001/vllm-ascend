@@ -185,6 +185,11 @@ PerLayerAttnMetadata: TypeAlias = list[AttnMetadataDict] | AttnMetadataDict
 
 SEQ_LEN_WITH_MAX_PA_WORKSPACE = 6144
 
+#--------------------tree attention demo-----------------------
+import os
+from vllm_ascend.spec_decode.tree_proposer import AscendTreeProposer
+from vllm_ascend.spec_decode.tree_verifier import AscendTreeVerifier
+#--------------------tree attention demo-----------------------
 
 @dataclass
 class GraphCaptureContext:
@@ -518,6 +523,20 @@ class NPUModelRunner(GPUModelRunner):
             self.kvcomp_meta_data = initialize_kvcomp_metadata(max_num_reqs=self.max_num_reqs,
                 block_size=self.block_size, device=self.device, vllm_config=self.vllm_config,
                 parallel_config=self.parallel_config, dtype=self.dtype)
+
+        #----------------------------read temp value for debug the tree tree attn demo-------------------------
+        self.enable_tree_spec_demo = os.getenv("VLLM_ASCEND_TREE_SPEC_DEMO") == "1"
+        self.tree_proposer = AscendTreeProposer()
+        self.tree_verifier = AscendTreeVerifier()
+        #--------------------------------------------------------------------------------------------
+
+    #----------------------------tree attn demo------------------------------------------------------
+    def _run_tree_spec_demo(self, logits, sampler_output):
+        trees = self.tree_proposer.propose_from_logits(logits)
+        verified_tokens = self.tree_verifier.verify_depth1(logits, trees)
+        sampler_output.sampled_token_ids.copy_(verified_tokens)
+        return sampler_output
+    #------------------------------------------------------------------------------------------------
 
     @property
     def use_cp(self) -> bool:
@@ -2161,6 +2180,14 @@ class NPUModelRunner(GPUModelRunner):
 
         with record_function_or_nullcontext("sample_token"):
             sampler_output = self._sample(logits, spec_decode_metadata)
+
+            #----------------------tree attn demo----------------------
+            # if self.enable_tree_spec_demo:
+            #     sampler_output = self._run_tree_spec_demo(
+            #         logits=logits,
+            #         sampler_output=sampler_output,
+            #     )
+            #-----------------------------------------------------------
 
         if self.need_accepted_tokens:
             if self.sampling_done_event is None:

@@ -933,6 +933,11 @@ class AscendSpecDecodeBaseProposer(SpecDecodeBaseProposer):
         )
         return next_token + bias
 
+    #------------------------------tree attn demo---------------------
+    def sample_draft_token_ids_from_logits(self, logits):
+        return logits.argmax(dim=-1)
+    #------------------------------tree attn demo---------------------
+
     def _run_merged_draft(
         self,
         num_input_tokens,
@@ -1032,12 +1037,22 @@ class AscendSpecDecodeBaseProposer(SpecDecodeBaseProposer):
                         logits = logits[:num_indices]
                         token_indices_to_sample = token_indices_to_sample[:num_indices]
                     draft_token_ids = logits.argmax(dim=-1)
+                    #------------------tree attn demo---------------------------
+                    draft_token_ids = self.sample_draft_token_ids_from_logits(logits)
+                    if getattr(self, "is_tree_proposer", False):
+                        return draft_token_ids
+                    #------------------tree attn demo---------------------------
             else:
                 logits = self.model.compute_logits(sample_hidden_states)
                 if lmhead_tp_enable() and num_indices < logits.shape[0]:
                     logits = logits[:num_indices]
                     token_indices_to_sample = token_indices_to_sample[:num_indices]
                 draft_token_ids = logits.argmax(dim=-1)
+                #------------------tree attn demo---------------------------
+                draft_token_ids = self.sample_draft_token_ids_from_logits(logits)
+                if getattr(self, "is_tree_proposer", False):
+                    return draft_token_ids
+                #------------------tree attn demo---------------------------
 
         # Early exit if there is only one draft token to be generated.
         if self.num_speculative_tokens == 1 or self.parallel_drafting:

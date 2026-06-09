@@ -28,7 +28,10 @@ from vllm_ascend.spec_decode.medusa_proposer import AscendMedusaProposer
 from vllm_ascend.spec_decode.ngram_proposer import AscendNgramProposer
 from vllm_ascend.spec_decode.ngram_proposer_npu import AscendNgramProposerNPU
 from vllm_ascend.spec_decode.suffix_proposer import AscendSuffixDecodingProposer
-
+#-----------------tree attn demo-----------------------------------------
+from vllm_ascend.spec_decode.tree_eagle_proposer import AscendTreeEagleProposer
+import os
+#-----------------tree attn demo-----------------------------------------
 
 def get_spec_decode_method(method, vllm_config, device, runner):
     if method == "ngram":
@@ -40,6 +43,14 @@ def get_spec_decode_method(method, vllm_config, device, runner):
     elif method == "medusa":
         return AscendMedusaProposer(vllm_config, device)
     elif method in ("eagle", "eagle3", "mtp"):
+        #-----------------tree attn demo-----------------------------------------
+        if (
+            method == "eagle3"
+            and os.getenv("VLLM_ASCEND_TREE_EAGLE3_DEMO", "0") == "1"
+        ):
+            return AscendTreeEagleProposer(vllm_config, device, runner)
+        #-----------------tree attn demo-----------------------------------------
+
         return AscendEagleProposer(vllm_config, device, runner)
     elif method == "dflash":
         return AscendDflashProposer(vllm_config, device, runner)
