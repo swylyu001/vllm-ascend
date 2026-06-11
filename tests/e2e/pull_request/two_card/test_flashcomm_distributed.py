@@ -30,9 +30,6 @@ from vllm.config import KVTransferConfig
 
 from tests.e2e.conftest import VllmRunner
 
-os.environ["PYTORCH_NPU_ALLOC_CONF"] = "max_split_size_mb:256"
-os.environ["VLLM_WORKER_MULTIPROC_METHOD"] = "spawn"
-
 QWEN_DENSE_MODELS = [
     "vllm-ascend/Qwen3-0.6B-W8A8",
 ]
@@ -78,7 +75,6 @@ def test_deepseek_v2_lite_fc1_tp2() -> None:
         vllm_model.generate(example_prompts, sampling_params)
 
 
-@pytest.mark.skip(reason="test is broken, fix me")
 @pytest.mark.parametrize("model", QWEN_DENSE_MODELS)
 @patch.dict(os.environ, {"VLLM_ASCEND_ENABLE_FLASHCOMM1": "1"})
 def test_qwen3_dense_fc1_tp2(model):
@@ -98,7 +94,6 @@ def test_qwen3_dense_fc1_tp2(model):
         vllm_model.generate_greedy(example_prompts, max_tokens)
 
 
-@pytest.mark.skip(reason="test is broken, fix me")
 @pytest.mark.parametrize("model", QWEN_DENSE_MODELS)
 @patch.dict(os.environ, {"VLLM_ASCEND_ENABLE_FLASHCOMM1": "1"})
 def test_qwen3_dense_prefetch_mlp_weight_tp2(model):
