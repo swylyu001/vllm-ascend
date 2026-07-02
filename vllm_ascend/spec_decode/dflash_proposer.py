@@ -60,6 +60,98 @@ class AscendDflashProposer(AscendEagleProposer):
 
         self.parallel_drafting_hidden_state_tensor = None
 
+        dflash_config = (
+            getattr(self.speculative_config.draft_model_config.hf_config, "dflash_config", {}) or {}
+        )
+        self.projector_type = dflash_config.get("projector_type")
+
+    def _get_domino_inputs(
+        self,
+        last_hidden_states: torch.Tensor,
+        token_indices_to_sample: torch.Tensor,
+        batch_size: int,
+    ) -> tuple[torch.Tensor, torch.Tensor]:
+        dflash_config = getattr(self.model.config, "dflash_config", {}) or {}
+        num_spec = self.num_speculative_tokens
+        num_sample = batch_size * num_spec
+
+        sample_hidden_states = last_hidden_states[
+            token_indices_to_sample[:num_sample]
+        ].view(batch_size, num_spec, -1)
+
+        anchor_indices = (
+            torch.arange(batch_size, device=self.device, dtype=torch.long)
+            * (1 + num_spec)
+        )
+        anchor_token_ids = self.input_ids[anchor_indices].unsqueeze(-1)
+
+        if bool(dflash_config.get("shift_label", False)):
+            sample_hidden_states = torch.cat(
+                [
+                    last_hidden_states[anchor_indices].unsqueeze(1),
+                    sample_hidden_states,
+                ],
+                dim=1,
+            )[:, :num_spec, :]
+
+        return sample_hidden_states, anchor_token_ids
+
+    def generate_domino_draft(
+        self,
+        sample_hidden_states: torch.Tensor,
+        anchor_token_ids: torch.Tensor,
+        base_logits: torch.Tensor,
+    ) -> torch.Tensor:
+        dflash_config = getattr(self.model.config, "dflash_config", {}) or {}
+        num_reqs, num_spec, _ = sample_hidden_states.shape
+        prefix_len = min(
+            int(dflash_config.get("pure_draft_prefix_len", 0)),
+            num_spec,
+        )
+
+        base_logits = base_logits.view(num_reqs, num_spec, -1)
+        draft_tokens = torch.empty(
+            (num_reqs, num_spec),
+            dtype=torch.long,
+            device=self.device,
+        )
+
+        if prefix_len > 0:
+            prefix_token_ids = base_logits[:, :prefix_len, :].reshape(
+                num_reqs * prefix_len,
+                -1,
+            ).argmax(dim=-1).view(num_reqs, prefix_len)
+
+            draft_tokens[:, :prefix_len] = prefix_token_ids
+            realized_prefix_ids = torch.cat(
+                [
+                    anchor_token_ids,
+                    prefix_token_ids,
+                ],
+                dim=1,
+            )
+        else:
+            realized_prefix_ids = anchor_token_ids
+
+        gru_hidden = self.model.init_domino_state(realized_prefix_ids)
+
+        for step in range(prefix_len, num_spec):
+            logits = self.model.compute_domino_logits(
+                sample_hidden_states[:, step, :],
+                gru_hidden,
+                base_logits[:, step, :],
+            )
+            token = logits.argmax(dim=-1)
+            draft_tokens[:, step] = token
+
+            if step + 1 < num_spec:
+                gru_hidden = self.model.advance_domino_state(
+                    token,
+                    gru_hidden,
+                )
+
+        return draft_tokens
+
     def set_inputs_first_pass(
         self,
         target_token_ids: torch.Tensor,

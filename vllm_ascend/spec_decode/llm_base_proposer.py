@@ -1106,10 +1106,24 @@ class AscendSpecDecodeBaseProposer(SpecDecodeBaseProposer):
                 token_indices_to_sample, (0, max_num_reqs_across_dp - num_indices)
             )
 
-        sample_hidden_states = last_hidden_states[token_indices_to_sample]
+
+        is_domino = self.method == "dflash" and self.projector_type == "domino"
+        if is_domino:
+            domino_hidden_states, domino_anchor_token_ids = self._get_domino_inputs(
+                last_hidden_states,
+                token_indices_to_sample,
+                batch_size,
+            )
+            sample_hidden_states = domino_hidden_states.reshape(
+                batch_size * self.num_speculative_tokens,
+                -1,
+            )
+        else:
+            sample_hidden_states = last_hidden_states[token_indices_to_sample]
+
 
         if get_ascend_config().enable_reduce_sample:
-            if self.method in ("eagle3", "dflash", "mtp"):
+            if self.method in ("eagle3", "dflash", "mtp") and not is_domino:
                 draft_token_ids = self.compute_draft_token_ids(sample_hidden_states)
                 if lmhead_tp_enable():
                     draft_token_ids, token_indices_to_sample = self._align_tensor_and_indices(
@@ -1133,7 +1147,8 @@ class AscendSpecDecodeBaseProposer(SpecDecodeBaseProposer):
                         ori_token_indices_to_sample,
                         is_logits=True,
                     )
-                draft_token_ids = logits.argmax(dim=-1)
+                
+                draft_token_ids = logits.argmax(dim=-1) if not is_domino else  self.generate_domino_draft(domino_hidden_states, domino_anchor_token_ids, logits,)
         else:
             logits = self.model.compute_logits(sample_hidden_states)
             if lmhead_tp_enable():
@@ -1144,7 +1159,8 @@ class AscendSpecDecodeBaseProposer(SpecDecodeBaseProposer):
                     ori_token_indices_to_sample,
                     is_logits=True,
                 )
-            draft_token_ids = logits.argmax(dim=-1)
+
+            draft_token_ids = logits.argmax(dim=-1) if not is_domino else  self.generate_domino_draft(domino_hidden_states, domino_anchor_token_ids, logits,)
 
         # Early exit if there is only one draft token to be generated.
         if self.num_speculative_tokens == 1 or self.parallel_drafting:
